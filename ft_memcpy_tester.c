@@ -77,24 +77,6 @@ static int test_no_overlap_allowed()
 	return fails;
 }
 
-static int test_unaligned_access()
-{
-	int fails = 0;
-	printf("[TEST] Unaligned Access\n");
-	char buffer[32];
-	for (int i = 0; i < 32; i++)
-		buffer[i] = (char)i;
-	ft_memcpy(buffer + 1, buffer, 31);
-	if (buffer[1] == 0 && buffer[2] == 1 && buffer[24] == 23)
-		PASS();
-	else
-	{
-		FAIL();
-		fails++;
-	}
-	return fails;
-}
-
 static int test_copy_within_struct()
 {
 	int fails = 0;
