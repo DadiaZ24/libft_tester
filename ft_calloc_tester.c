@@ -10,7 +10,24 @@ static int test_integer_overflow()
 	printf("[TEST] Integer Overflow\n");
 	size_t a = SIZE_MAX / 2 + 1;
 	size_t b = 2;
-	void *ptr = calloc(a, b);
+	void *ptr = ft_calloc(a, b);
+	if (!ptr)
+		PASS();
+	else
+	{
+		FAIL();
+		fails++;
+		free(ptr);
+	}
+	return fails;
+}
+
+static int test_size_overflow()
+{
+	int fails = 0;
+
+	printf("[TEST] SIZE Overflow\n");
+	void *ptr = ft_calloc((size_t)-1, sizeof(int));
 	if (!ptr)
 		PASS();
 	else
@@ -27,8 +44,8 @@ static int test_zero_allocation()
 	int fails = 0;
 
 	printf("[TEST] Zero Allocation\n");
-	void *ptr1 = calloc(0, 1000);
-	void *ptr2 = calloc(1000, 0);
+	void *ptr1 = ft_calloc(0, 1000);
+	void *ptr2 = ft_calloc(1000, 0);
 
 	if (ptr1 || ptr2)
 		PASS(); // valid: implementation-defined
@@ -44,7 +61,7 @@ static int test_maximum_allocation()
 	int fails = 0;
 
 	printf("[TEST] Maximum Allocation\n");
-	void *ptr = calloc(1, SIZE_MAX);
+	void *ptr = ft_calloc(1, SIZE_MAX);
 	if (!ptr)
 		PASS();
 	else
@@ -65,7 +82,7 @@ static int test_fuzz_allocations()
 
 	for (size_t i = 1; i <= 5000; i *= 2)
 	{
-		void *ptr = calloc(i, step);
+		void *ptr = ft_calloc(i, step);
 		if (!ptr)
 		{
 			printf("  Reached alloc limit at %zu x %zu\n", i, step);
@@ -87,7 +104,7 @@ static int test_negative_size_cast()
 
 	printf("[TEST] Negative Size Cast\n");
 	int neg = -10;
-	void *ptr = calloc((size_t)neg, sizeof(int));
+	void *ptr = ft_calloc((size_t)neg, sizeof(int));
 	if (!ptr)
 		PASS();
 	else
@@ -105,7 +122,7 @@ static void *thread_calloc_test(void *arg)
 	(void)arg;
 	for (int i = 0; i < ALLOCS_PER_THREAD; ++i)
 	{
-		void *ptr = calloc(10, 10);
+		void *ptr = ft_calloc(10, 10);
 		if (ptr)
 			free(ptr);
 	}
@@ -140,7 +157,7 @@ static int test_use_after_free()
 {
 	int fails = 0;
 	printf("[TEST] Use-After-Free (intentional UB)\n");
-	int *arr = calloc(4, sizeof(int));
+	int *arr = ft_calloc(4, sizeof(int));
 	if (!arr)
 	{
 		FAIL();
@@ -162,6 +179,8 @@ int testing_ft_calloc()
 
 	TITLE("FT_CALLOC");
 	fails += test_integer_overflow();
+	sleep(1);
+	fails += test_size_overflow();
 	sleep(1);
 	fails += test_zero_allocation();
 	sleep(1);
