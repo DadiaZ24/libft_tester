@@ -19,6 +19,7 @@ static int test_integer_overflow()
 		fails++;
 		free(ptr);
 	}
+	free(ptr);
 	return fails;
 }
 
@@ -36,6 +37,7 @@ static int test_size_overflow()
 		fails++;
 		free(ptr);
 	}
+	free(ptr);
 	return fails;
 }
 
@@ -70,6 +72,7 @@ static int test_maximum_allocation()
 		fails++;
 		free(ptr);
 	}
+	free(ptr);
 	return fails;
 }
 
@@ -114,6 +117,7 @@ static int test_negative_size_cast()
 		CHECK();
 		free(ptr);
 	}
+	free(ptr);
 	return fails;
 }
 

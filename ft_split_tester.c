@@ -15,7 +15,8 @@ static int test_split_basic()
 		FAIL();
 		fails++;
 	}
-	for (int i = 0; result && result[i]; i++)
+	int i = -1;
+	while (result[--i])
 		free(result[i]);
 	free(result);
 	return fails;
