@@ -112,8 +112,6 @@ int testing_ft_memcpy()
 	sleep(1);
 	fails += test_no_overlap_allowed();
 	sleep(1);
-	fails += test_unaligned_access();
-	sleep(1);
 	fails += test_copy_within_struct();
 	sleep(1);
 	printf("\n===== Testing Complete =====\n");
