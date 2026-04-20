@@ -59,14 +59,20 @@ int testing_ft_atoi();
 int testing_ft_itoa();
 int testing_ft_split();
 int testing_ft_string_funcs();
-int testing_ft_split();
 int testing_ft_strlcpy_strlcat();
 int testing_ft_strl();
 int testing_ft_striteri_bzero_strncmp();
 int testing_ft_isalpha_isdigit_toupper_tolower();
+int testing_ft_isalnum_isascii_isprint();
+int testing_ft_strlen_memset_memchr_memcmp();
+int testing_ft_strjoin_putfd();
 int testing_ft_lst_last();
 int testing_ft_lstadd_back();
 int testing_ft_lstclear();
 int testing_ft_lstadd_front();
+int testing_ft_lstnew_lstsize_lstdelone();
+int testing_ft_lstiter_lstmap();
+int testing_ft_hardcore();
+int testing_ft_lstmap_hardcore();
 
 #endif

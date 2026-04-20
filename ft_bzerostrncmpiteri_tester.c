@@ -3,13 +3,14 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstringop-overflow="
 
+static void striteri_add_index(unsigned int i, char *c) { *c += i; }
+
 static int test_striteri_basic()
 {
 	int fails = 0;
 	printf("[TEST] striteri Basic Case\n");
 	char str[] = "abc";
-	void f(unsigned int i, char *c) { *c += i; }
-	ft_striteri(str, f);
+	ft_striteri(str, striteri_add_index);
 	if (strcmp(str, "ace") == 0)
 		PASS();
 	else

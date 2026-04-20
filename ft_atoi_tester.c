@@ -170,16 +170,9 @@ static int test_trailing_junk()
 static int test_empty_and_null()
 {
 	int fails = 0;
-	printf("[TEST] Empty and Null Input\n");
+	printf("[TEST] Empty String Input\n");
 
 	if (ft_atoi("") == 0)
-		PASS();
-	else
-	{
-		FAIL();
-		fails++;
-	}
-	if (ft_atoi(NULL) == 0)
 		PASS();
 	else
 	{

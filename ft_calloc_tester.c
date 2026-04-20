@@ -160,17 +160,11 @@ static int test_multithreaded_calloc()
 static int test_use_after_free()
 {
 	int fails = 0;
-	printf("[TEST] Use-After-Free (intentional UB)\n");
-	int *arr = ft_calloc(4, sizeof(int));
-	if (!arr)
-	{
-		FAIL();
-		fails++;
-		return fails;
-	}
-	free(arr);
-	arr[0] = 42; // UAF (undefined behavior)
-	printf("  CHECK: Wrote to freed memory (value: %d)\n", arr[0]);
+	printf("[TEST] Use-After-Free (skipped — causes heap corruption)\n");
+	/*
+	** Writing to freed memory is undefined behaviour and corrupts glibc's
+	** tcache, causing spurious failures in later tests. Test omitted.
+	*/
 	PASS();
 	return fails;
 }

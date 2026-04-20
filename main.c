@@ -19,6 +19,10 @@ int main()
 	fails += testing_ft_strl();
 	fails += testing_ft_striteri_bzero_strncmp();
 	fails += testing_ft_isalpha_isdigit_toupper_tolower();
+	fails += testing_ft_isalnum_isascii_isprint();
+	fails += testing_ft_strlen_memset_memchr_memcmp();
+	fails += testing_ft_strjoin_putfd();
+	fails += testing_ft_hardcore();
 
 	END(fails);
 	return 0;
