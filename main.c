@@ -24,6 +24,15 @@ int main()
 	fails += testing_ft_strjoin_putfd();
 	fails += testing_ft_hardcore();
 
+	fails += testing_ft_lst_last();
+	fails += testing_ft_lstclear();
+	fails += testing_ft_lstadd_back();
+	fails += testing_ft_lstadd_front();
+	fails += testing_ft_lstnew_lstsize_lstdelone();
+	fails += testing_ft_lstiter_lstmap();
+	fails += testing_ft_hardcore();
+	fails += testing_ft_lstmap_hardcore();
+
 	END(fails);
 	return 0;
 }

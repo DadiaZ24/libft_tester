@@ -9,7 +9,10 @@ MAIN_BONUS       = main_bonus.c
 SRC              = ft_calloc_tester.c ft_memmove_tester.c ft_memcpy_tester.c ft_atoi_tester.c ft_itoa_tester.c \
                    ft_split_tester.c ft_str_tester.c ft_strlcatcpy_tester.c ft_strtrimmapi_tester.c ft_bzerostrncmpiteri_tester.c \
                    ft_alphadigitupperlower_tester.c ft_char_funcs_tester.c ft_strlen_memset_memchr_memcmp_tester.c \
-                   ft_strjoin_putfd_tester.c ft_hardcore_tester.c
+                   ft_strjoin_putfd_tester.c ft_hardcore_tester.c \
+				   bonus/ft_lstlast_tester.c bonus/ft_lstadd_back_tester.c bonus/ft_lstclear_tester.c bonus/ft_lstadd_front_tester.c \
+                   bonus/ft_lstnew_lstsize_lstdelone_tester.c bonus/ft_lstiter_lstmap_tester.c \
+                   bonus/ft_lstmap_hardcore_tester.c
 
 SRC_BONUS        = bonus/ft_lstlast_tester.c bonus/ft_lstadd_back_tester.c bonus/ft_lstclear_tester.c bonus/ft_lstadd_front_tester.c \
                    bonus/ft_lstnew_lstsize_lstdelone_tester.c bonus/ft_lstiter_lstmap_tester.c \
