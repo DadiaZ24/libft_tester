@@ -1,74 +1,59 @@
 # **************************************************************************** #
 #                                  Makefile                                    #
 # **************************************************************************** #
+#
+#  make          -> subject checks + build libft + build tester + run everything
+#  make test     -> build + run the tests only
+#  make check    -> subject checks only (Makefile, relink, forbidden functions,
+#                   global variables, norminette, README...)
+#  make run T=split  -> only the tests whose name contains "split"
+#
 
-NAME             = tester
-MAIN             = main.c
-MAIN_BONUS       = main_bonus.c
+NAME        = tester
 
-SRC              = ft_calloc_tester.c ft_memmove_tester.c ft_memcpy_tester.c ft_atoi_tester.c ft_itoa_tester.c \
-                   ft_split_tester.c ft_str_tester.c ft_strlcatcpy_tester.c ft_strtrimmapi_tester.c ft_bzerostrncmpiteri_tester.c \
-                   ft_alphadigitupperlower_tester.c ft_char_funcs_tester.c ft_strlen_memset_memchr_memcmp_tester.c \
-                   ft_strjoin_putfd_tester.c ft_hardcore_tester.c \
-				   bonus/ft_lstlast_tester.c bonus/ft_lstadd_back_tester.c bonus/ft_lstclear_tester.c bonus/ft_lstadd_front_tester.c \
-                   bonus/ft_lstnew_lstsize_lstdelone_tester.c bonus/ft_lstiter_lstmap_tester.c \
-                   bonus/ft_lstmap_hardcore_tester.c
+SRC         = main.c framework.c test_prototypes.c test_part1.c test_part2.c \
+              test_part3.c test_memory.c
+OBJ         = $(SRC:.c=.o)
 
-SRC_BONUS        = bonus/ft_lstlast_tester.c bonus/ft_lstadd_back_tester.c bonus/ft_lstclear_tester.c bonus/ft_lstadd_front_tester.c \
-                   bonus/ft_lstnew_lstsize_lstdelone_tester.c bonus/ft_lstiter_lstmap_tester.c \
-                   bonus/ft_lstmap_hardcore_tester.c
+LIBFT_DIR   = ..
+LIBFT_LIB   = $(LIBFT_DIR)/libft.a
 
-CC               = cc
-CFLAGS           = -O2 -g -I../ -D_GNU_SOURCE
-LDFLAGS          = -L../ -lft -lpthread -ldl
+CC          = cc
+# -O0 and -fno-builtin: the compiler must not optimise away the tester's
+# own malloc/free/memcmp calls or assume things about them.
+CFLAGS      = -Wall -Wextra -O0 -g -fno-builtin -D_GNU_SOURCE -I$(LIBFT_DIR)
+LDFLAGS     = -L$(LIBFT_DIR) -lft -ldl
 
-OBJ              = $(SRC:.c=.o)
-OBJ_BONUS        = $(SRC_BONUS:.c=.o)
-MAIN_OBJ         = $(MAIN:.c=.o)
-MAIN_BONUS_OBJ   = $(MAIN_BONUS:.c=.o)
+all: check test
 
-LIBFT_DIR        = ../
-LIBFT_LIB        = $(LIBFT_DIR)/libft.a
+test: $(NAME)
+	@./$(NAME) $(T) || true
 
-# Pattern rule to compile .c files into .o files (including those in subdirs)
-%.o: %.c
+run: test
+
+check:
+	@bash ./check_project.sh $(LIBFT_DIR)
+
+libft:
+	@echo "📦 Building libft..."
+	@$(MAKE) -C $(LIBFT_DIR) --no-print-directory
+
+%.o: %.c tester.h $(LIBFT_DIR)/libft.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Default rule
-all: $(LIBFT_LIB) $(NAME) run
-
-$(LIBFT_LIB):
-	@echo "📦 Building libft..."
-	@make -C $(LIBFT_DIR)
-
-$(NAME): $(OBJ) $(MAIN_OBJ)
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+$(NAME): libft $(OBJ)
+	$(CC) $(CFLAGS) $(OBJ) -o $@ $(LDFLAGS)
 	@echo "✔️  Built $(NAME)"
 
-bonus: bonus_libft $(LIBFT_LIB) $(OBJ) $(OBJ_BONUS) $(MAIN_BONUS_OBJ)
-	$(CC) $(CFLAGS) $(OBJ) $(OBJ_BONUS) $(MAIN_BONUS_OBJ) -o $(NAME) $(LDFLAGS)
-	@echo "✔️  Built bonus $(NAME)"
-	@./$(NAME)
-	@make fclean --silent
-	@echo "✔️  Program executed and cleaned"
-
-bonus_libft:
-	@echo "📦 Building libft with bonus..."
-	@make -C $(LIBFT_DIR)
-	@make bonus -C $(LIBFT_DIR)
-
 clean:
-	@rm -f $(OBJ) $(OBJ_BONUS) $(MAIN_OBJ) $(MAIN_BONUS_OBJ)
+	@rm -f $(OBJ)
 	@echo "🧹 Cleaned object files"
 
 fclean: clean
 	@rm -f $(NAME)
-	@make fclean -C $(LIBFT_DIR)
+	@$(MAKE) fclean -C $(LIBFT_DIR) --no-print-directory
 	@echo "🧼 Fully cleaned $(NAME)"
 
-run:
-	@./$(NAME)
-	@make fclean --silent
-	@echo "✔️  Program executed and cleaned"
-
 re: fclean all
+
+.PHONY: all test run check libft clean fclean re
