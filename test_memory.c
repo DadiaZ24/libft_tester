@@ -1,23 +1,12 @@
 #include "tester.h"
 
 /*
-** MEMORY KILLERS
-**
-** 1. Malloc failure injection: each scenario is run once normally to count
-**    its mallocs, then once per malloc with exactly that malloc returning
-**    NULL. At every single failure point the function must:
-**      - not crash (no segfault / double free),
-**      - return NULL (the subject: "NULL if the allocation fails"),
-**      - free everything it had already allocated (no leak),
-**      - for ft_lstmap: del() the content f() produced for the node that
-**        could not be allocated, and leave the original list untouched.
-**    Any one of these, hit during an evaluation, is a 0.
-**
-** 2. One-shot chain: one scenario that pipes every allocating function into
-**    the next, on guarded inputs, with the same failure injection.
-**
-** 3. Very long lists (1 000 000 nodes): recursive ft_lstsize / ft_lstclear /
-**    ft_lstmap blow up the stack. Reported as WARN.
+** ALL TOGETHER
+** Tests that use many libft functions at once (the other tests each check
+** a single function):
+**   - one chain piping every allocating function into the next, on guarded
+**     inputs, with a malloc failure injected at every single point;
+**   - thousands of calls in a row, so a leak hidden in one branch adds up.
 */
 
 static int	g_del_calls;
@@ -41,12 +30,6 @@ static void	del_free(void *p)
 	free(p);
 }
 
-static void	del_noop(void *p)
-{
-	(void)p;
-	g_del_calls++;
-}
-
 static void	*map_dup(void *p)
 {
 	char	*r;
@@ -56,12 +39,6 @@ static void	*map_dup(void *p)
 	r = dupstr(p);
 	t_arm();
 	return (r);
-}
-
-static void	*map_same(void *p)
-{
-	g_f_calls++;
-	return (p);
 }
 
 static char	map_rot(unsigned int i, char c)
@@ -82,176 +59,7 @@ static void	after(const void *res, int inj_before, const char *fn)
 }
 
 /* ------------------------------------------------------------------ */
-/* 1. Malloc failure injection, one function at a time                */
-/* ------------------------------------------------------------------ */
-
-#define SIMPLE_STR_MF(NAME, LABEL, CALL, EXP) \
-static void	NAME(void) \
-{ \
-	char	*r; \
-\
-	CASE("%s", LABEL); \
-	t_arm(); \
-	r = CALL; \
-	t_disarm(); \
-	if (t_injected()) \
-	{ \
-		EXPECT(r == NULL, "returned non-NULL although its malloc returned NULL"); \
-		t_free(r); \
-	} \
-	else \
-		t_check_str(LABEL, r, EXP); \
-}
-
-SIMPLE_STR_MF(mf_strdup, "ft_strdup(\"hello\")", ft_strdup(t_gstr("hello")), "hello")
-SIMPLE_STR_MF(mf_substr, "ft_substr(\"Hello World\", 6, 5)", ft_substr(t_gstr("Hello World"), 6, 5), "World")
-SIMPLE_STR_MF(mf_substr_empty, "ft_substr(\"hola\", 42, 3)", ft_substr(t_gstr("hola"), 42, 3), "")
-SIMPLE_STR_MF(mf_strjoin, "ft_strjoin(\"Hello\", \" World\")", ft_strjoin(t_gstr("Hello"), t_gstr(" World")), "Hello World")
-SIMPLE_STR_MF(mf_strtrim, "ft_strtrim(\"  hello  \", \" \")", ft_strtrim(t_gstr("  hello  "), t_gstr(" ")), "hello")
-SIMPLE_STR_MF(mf_strtrim_all, "ft_strtrim(\"xxxx\", \"x\")", ft_strtrim(t_gstr("xxxx"), t_gstr("x")), "")
-SIMPLE_STR_MF(mf_itoa, "ft_itoa(-2147483648)", ft_itoa(INT_MIN), "-2147483648")
-SIMPLE_STR_MF(mf_itoa0, "ft_itoa(0)", ft_itoa(0), "0")
-SIMPLE_STR_MF(mf_strmapi, "ft_strmapi(\"abcdef\", f)", ft_strmapi(t_gstr("abcdef"), map_rot), "acedfh")
-
-static void	mf_calloc(void)
-{
-	void	*r;
-
-	CASE("ft_calloc(10, sizeof(int))");
-	t_arm();
-	r = ft_calloc(10, sizeof(int));
-	t_disarm();
-	if (t_injected())
-		EXPECT(r == NULL, "returned non-NULL although its malloc returned NULL");
-	else
-		EXPECT(r && t_is_block(r), "expected a malloc'd block");
-	t_free(r);
-}
-
-static void	mf_calloc0(void)
-{
-	void	*r;
-
-	CASE("ft_calloc(0, 0)");
-	t_arm();
-	r = ft_calloc(0, 0);
-	t_disarm();
-	if (t_injected())
-		EXPECT(r == NULL, "returned non-NULL although its malloc returned NULL");
-	t_free(r);
-}
-
-static void	split_scenario(const char *s, char c)
-{
-	char	**r;
-	size_t	i;
-
-	CASE("ft_split(\"%s\", '%c')", t_esc(s), c);
-	t_arm();
-	r = ft_split(t_gstr(s), c);
-	t_disarm();
-	if (t_injected())
-		EXPECT(r == NULL, "returned non-NULL although one of its mallocs returned NULL"
-			" (the subject: NULL if ANY allocation fails)");
-	else if (!r)
-		t_fail("returned NULL");
-	else
-	{
-		i = 0;
-		while (t_is_block(r[i]))
-			i++;
-		EXPECT(r[i] == NULL, "the array is not NULL-terminated");
-	}
-	t_free_split(r);
-}
-
-static void	mf_split1(void) { split_scenario("hello world foo bar", ' '); }
-static void	mf_split2(void) { split_scenario(",,a,,b,,", ','); }
-static void	mf_split3(void) { split_scenario("single", ' '); }
-static void	mf_split4(void) { split_scenario("   ", ' '); }
-static void	mf_split5(void) { split_scenario("  lorem ipsum dolor sit amet consectetur adipiscing  ", ' '); }
-
-static void	mf_lstnew(void)
-{
-	t_list	*n;
-
-	CASE("ft_lstnew(\"x\")");
-	t_arm();
-	n = ft_lstnew("x");
-	t_disarm();
-	if (t_injected())
-		EXPECT(n == NULL, "returned non-NULL although its malloc returned NULL");
-	t_free(n);
-}
-
-static void	lstmap_scenario(int len)
-{
-	static const char	*w[] = {"a", "bb", "ccc", "dddd", "eeeee", "ffffff"};
-	t_list				*l;
-	t_list				*last;
-	t_list				*node;
-	t_list				*m;
-	t_list				*cur;
-	int					i;
-	int					ok;
-
-	l = NULL;
-	last = NULL;
-	i = 0;
-	while (i < len)
-	{
-		node = ft_lstnew(dupstr(w[i]));
-		if (last)
-			last->next = node;
-		else
-			l = node;
-		last = node;
-		i++;
-	}
-	g_del_calls = 0;
-	g_f_calls = 0;
-	CASE("ft_lstmap(<%d nodes>, strdup, del)", len);
-	t_arm();
-	m = ft_lstmap(l, map_dup, del_free);
-	t_disarm();
-	if (t_injected())
-		EXPECT(m == NULL, "returned non-NULL although one of its mallocs returned NULL");
-	else
-		EXPECT(m != NULL && ft_lstsize(m) == (unsigned)len, "wrong result");
-	ok = 1;
-	cur = l;
-	i = 0;
-	while (cur && ok)
-	{
-		ok = t_is_block(cur) && t_is_block(cur->content) && strcmp(cur->content, w[i++]) == 0;
-		cur = cur->next;
-	}
-	EXPECT(ok && i == len, "the ORIGINAL list was freed or modified");
-	while (m)
-	{
-		cur = m->next;
-		if (t_is_block(m))
-		{
-			t_free(m->content);
-			free(m);
-		}
-		m = cur;
-	}
-	while (l)
-	{
-		cur = l->next;
-		free(l->content);
-		free(l);
-		l = cur;
-	}
-}
-
-static void	mf_lstmap1(void) { lstmap_scenario(1); }
-static void	mf_lstmap2(void) { lstmap_scenario(2); }
-static void	mf_lstmap6(void) { lstmap_scenario(6); }
-
-/* ------------------------------------------------------------------ */
-/* 2. One-shot chain                                                  */
+/* One-shot chain                                                     */
 /* ------------------------------------------------------------------ */
 
 static void	killer_chain(void)
@@ -365,108 +173,7 @@ static void	killer_chain(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* 3. Very long lists                                                 */
-/* ------------------------------------------------------------------ */
-
-#define DEEP 1000000
-
-static t_list	*build_deep(void)
-{
-	t_list	*head;
-	t_list	*last;
-	t_list	*n;
-	int		i;
-
-	head = ft_lstnew("deep");
-	last = head;
-	i = 1;
-	while (last && i < DEEP)
-	{
-		n = ft_lstnew("deep");
-		last->next = n;
-		last = n;
-		i++;
-	}
-	return (head);
-}
-
-static void	free_deep(t_list *l)
-{
-	t_list	*next;
-
-	while (l)
-	{
-		next = l->next;
-		free(l);
-		l = next;
-	}
-}
-
-static void	deep_size_last(void)
-{
-	t_list	*l;
-	t_list	*last;
-
-	l = build_deep();
-	CASE("ft_lstsize(<1 000 000 nodes>)");
-	EXPECT(ft_lstsize(l) == DEEP, "wrong size");
-	last = l;
-	while (last->next)
-		last = last->next;
-	CASE("ft_lstlast(<1 000 000 nodes>)");
-	EXPECT(ft_lstlast(l) == last, "wrong last node");
-	g_f_calls = 0;
-	CASE("ft_lstiter(<1 000 000 nodes>, f)");
-	ft_lstiter(l, (void (*)(void *))nothing);
-	free_deep(l);
-}
-
-static void	deep_clear(void)
-{
-	t_list	*l;
-
-	l = build_deep();
-	g_del_calls = 0;
-	CASE("ft_lstclear(<1 000 000 nodes>, del)");
-	ft_lstclear(&l, del_noop);
-	EXPECT(l == NULL && g_del_calls == DEEP, "del called %d time(s)", g_del_calls);
-}
-
-static void	deep_map(void)
-{
-	t_list	*l;
-	t_list	*m;
-
-	l = build_deep();
-	g_f_calls = 0;
-	CASE("ft_lstmap(<1 000 000 nodes>, f, del)");
-	m = ft_lstmap(l, map_same, del_noop);
-	EXPECT(m && g_f_calls == DEEP, "f called %d time(s)", g_f_calls);
-	free_deep(m);
-	free_deep(l);
-}
-
-static void	deep_add_back(void)
-{
-	t_list	*l;
-	t_list	*n;
-	int		i;
-
-	l = NULL;
-	i = 0;
-	CASE("20 000 x ft_lstadd_back");
-	while (i < 20000)
-	{
-		n = ft_lstnew("x");
-		ft_lstadd_back(&l, n);
-		i++;
-	}
-	EXPECT(ft_lstsize(l) == 20000, "wrong size");
-	free_deep(l);
-}
-
-/* ------------------------------------------------------------------ */
-/* 4. Repetition: a leak that only happens in some branch adds up     */
+/* Repetition: a leak that only happens in some branch adds up        */
 /* ------------------------------------------------------------------ */
 
 static void	repeat_everything(void)
@@ -492,37 +199,48 @@ static void	repeat_everything(void)
 	}
 }
 
-/* ------------------------------------------------------------------ */
+static void	chain_ok(void)
+{
+	char	*s;
+	char	**arr;
+	char	*j;
+	t_list	*lst;
+	t_list	*m;
+	int		i;
+
+	CASE("ft_strtrim(ft_substr(...)) -> ft_split -> list -> ft_lstmap -> ft_strjoin");
+	s = ft_strtrim(t_gstr("  --one two three--  "), t_gstr_front(" -"));
+	EXPECT(s && !strcmp(s, "one two three"), "ft_strtrim gave \"%s\"", t_esc(s));
+	arr = ft_split(s ? s : "one two three", ' ');
+	lst = NULL;
+	i = 0;
+	while (t_is_block(arr) && t_is_block(arr[i]))
+		ft_lstadd_back(&lst, ft_lstnew(arr[i++]));
+	EXPECT(i == 3 && ft_lstsize(lst) == 3, "expected 3 words / nodes");
+	m = ft_lstmap(lst, map_dup, del_free);
+	j = ft_strjoin(m && m->content ? m->content : "", ft_lstlast(lst) ? ft_lstlast(lst)->content : "");
+	EXPECT(j && !strcmp(j, "onethree"), "expected \"onethree\", got \"%s\"", t_esc(j));
+	ft_lstclear(&m, free);
+	ft_lstclear(&lst, nothing);
+	EXPECT(m == NULL && lst == NULL, "ft_lstclear must set the lists to NULL");
+	t_free_split(arr);
+	t_free(s);
+	t_free(j);
+}
+
+static const t_test	g_all[] = {
+	TEST("a chain of functions, no failure", "trim -> split -> lstnew / lstadd_back -> lstmap -> strjoin \
+-> lstclear: the functions work together and nothing leaks.", chain_ok),
+	{"killer chain, every malloc fails once", "substr -> strtrim -> strjoin -> split -> itoa -> strdup -> \
+strmapi -> calloc -> lstnew -> lstmap -> lstclear on guarded inputs. The chain is run once per malloc, \
+with that malloc failing: every function must return NULL, free what it allocated and never crash.",
+		killer_chain, T_MUST, 20, 1},
+	TEST_SLOW("5000 x every allocating function", "substr, strjoin, strtrim, split, itoa, strmapi, strdup \
+5000 times each with varying inputs: a leak in a single branch adds up.", repeat_everything),
+};
 
 void	run_memory(void)
 {
-	t_section("MEMORY KILLERS: malloc fails at EVERY point (no crash, NULL, no leak)");
-	t_run_malloc_fail("malloc fail: ft_strdup", mf_strdup, 5);
-	t_run_malloc_fail("malloc fail: ft_calloc(10, 4)", mf_calloc, 5);
-	t_run_malloc_fail("malloc fail: ft_calloc(0, 0)", mf_calloc0, 5);
-	t_run_malloc_fail("malloc fail: ft_substr", mf_substr, 5);
-	t_run_malloc_fail("malloc fail: ft_substr (start > len)", mf_substr_empty, 5);
-	t_run_malloc_fail("malloc fail: ft_strjoin", mf_strjoin, 5);
-	t_run_malloc_fail("malloc fail: ft_strtrim", mf_strtrim, 5);
-	t_run_malloc_fail("malloc fail: ft_strtrim (everything trimmed)", mf_strtrim_all, 5);
-	t_run_malloc_fail("malloc fail: ft_itoa(INT_MIN)", mf_itoa, 5);
-	t_run_malloc_fail("malloc fail: ft_itoa(0)", mf_itoa0, 5);
-	t_run_malloc_fail("malloc fail: ft_strmapi", mf_strmapi, 5);
-	t_run_malloc_fail("malloc fail: ft_split 4 words", mf_split1, 5);
-	t_run_malloc_fail("malloc fail: ft_split \",,a,,b,,\"", mf_split2, 5);
-	t_run_malloc_fail("malloc fail: ft_split 1 word", mf_split3, 5);
-	t_run_malloc_fail("malloc fail: ft_split only delimiters", mf_split4, 5);
-	t_run_malloc_fail("malloc fail: ft_split 7 words", mf_split5, 5);
-	t_run_malloc_fail("malloc fail: ft_lstnew", mf_lstnew, 5);
-	t_run_malloc_fail("malloc fail: ft_lstmap 1 node", mf_lstmap1, 5);
-	t_run_malloc_fail("malloc fail: ft_lstmap 2 nodes", mf_lstmap2, 5);
-	t_run_malloc_fail("malloc fail: ft_lstmap 6 nodes", mf_lstmap6, 5);
-	t_section("MEMORY KILLERS: one-shot chain (everything, guarded, every malloc fails once)");
-	t_run_malloc_fail("killer chain: substr > strtrim > strjoin > split > itoa > ... > lstmap", killer_chain, 10);
-	t_section("MEMORY KILLERS: repetition and very long lists");
-	t_run("5000 x every allocating function (leaks add up)", repeat_everything, T_MUST, 20);
-	t_run("20 000 x ft_lstadd_back", deep_add_back, T_MUST, 20);
-	t_run("1 000 000 nodes: ft_lstsize / ft_lstlast / ft_lstiter", deep_size_last, T_WARN, 30);
-	t_run("1 000 000 nodes: ft_lstclear (recursion = stack overflow)", deep_clear, T_WARN, 30);
-	t_run("1 000 000 nodes: ft_lstmap (recursion = stack overflow)", deep_map, T_WARN, 30);
+	t_section("ALL TOGETHER");
+	GROUP_OTHER("all together", g_all);
 }

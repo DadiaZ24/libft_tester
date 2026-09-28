@@ -4,12 +4,19 @@
 # variables, non-static helpers, restrict, norminette, README.
 
 DIR="${1:-..}"
+TRACE="${2:-/dev/null}"   # why a check failed goes here, not on the screen
 RED=$'\e[1;31m'; GRN=$'\e[1;32m'; YEL=$'\e[1;33m'; CYN=$'\e[0;36m'; DIM=$'\e[2m'; RST=$'\e[0m'
 KO=0; WARN=0
 
-ok()   { printf "  %-70s ${GRN}[OK]${RST}\n" "$1"; }
-ko()   { printf "  %-70s ${RED}[KO]${RST}\n" "$1"; [ -n "$2" ] && printf "      ${RED}✗ %s${RST}\n" "$2"; KO=$((KO+1)); }
-warn() { printf "  %-70s ${YEL}[WARN]${RST}\n" "$1"; [ -n "$2" ] && printf "      ${YEL}! %s${RST}\n" "$2"; WARN=$((WARN+1)); }
+detail() {
+	printf "%-9s %s\n" "$1" "$2" >> "$TRACE"
+	[ -n "$3" ] && printf "%s\n" "$3" | sed 's/^/      ✗ /' >> "$TRACE"
+	[ "$1" != "[OK]" ] && printf "\n" >> "$TRACE"
+	return 0
+}
+ok()   { printf "  %-70s ${GRN}[OK]${RST}\n" "$1"; detail "[OK]" "$1"; }
+ko()   { printf "  %-70s ${RED}[KO]${RST}\n" "$1"; detail "[KO]" "$1" "$2"; KO=$((KO+1)); }
+warn() { printf "  %-70s ${YEL}[WARN]${RST}\n" "$1"; detail "[WARN]" "$1" "$2"; WARN=$((WARN+1)); }
 
 REQUIRED="ft_isalpha ft_isdigit ft_isalnum ft_isascii ft_isprint ft_strlen ft_memset ft_bzero
 ft_memcpy ft_memmove ft_strlcpy ft_strlcat ft_toupper ft_tolower ft_strchr ft_strrchr ft_strncmp
@@ -19,7 +26,8 @@ ft_lstnew ft_lstadd_front ft_lstsize ft_lstlast ft_lstadd_back ft_lstdelone ft_l
 ft_lstiter ft_lstmap"
 ALLOWED_EXT="malloc free write __stack_chk_fail _GLOBAL_OFFSET_TABLE_ __stack_chk_guard"
 
-printf "${CYN}\n\n ========= SUBJECT CHECKS (%s) =========== \n\n${RST}" "$(cd "$DIR" && pwd)"
+printf "${CYN}\n ========= SUBJECT CHECKS (%s) =========== \n\n${RST}" "$(cd "$DIR" && pwd)"
+printf "\n==================== SUBJECT CHECKS (%s) ====================\n\n" "$(cd "$DIR" && pwd)" >> "$TRACE"
 
 # ------------------------------------------------------------------ files
 for f in Makefile libft.h README.md; do
@@ -152,5 +160,7 @@ if [ -f "$R" ]; then
 		&& ok "README: explains how AI was used" || ko "README: explains how AI was used" "required in Resources"
 fi
 
-printf "\n  ${DIM}subject checks: %d KO, %d WARN${RST}\n" "$KO" "$WARN"
+why=""
+[ "$TRACE" != /dev/null ] && [ $((KO + WARN)) -gt 0 ] && why=" - why: $TRACE"
+printf "\n  ${DIM}subject checks: %d KO, %d WARN%s${RST}\n" "$KO" "$WARN" "$why"
 exit 0

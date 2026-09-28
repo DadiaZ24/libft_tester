@@ -3,8 +3,9 @@
 
 /*
 ** Prototypes from subject v19.3 (libc prototypes without 'restrict').
-** Checked at compile time with __builtin_types_compatible_p, reported at
-** run time so a single mismatch doesn't stop the whole tester.
+** Compared with the prototypes of your libft.h (renamed user_ft_*, see
+** libft_api.h) at compile time, reported at run time: a mismatch or a
+** function not declared yet never stops the build.
 */
 
 typedef struct s_proto
@@ -14,7 +15,8 @@ typedef struct s_proto
 	int			ok;
 }	t_proto;
 
-#define P(fn, type) {#fn, #type, __builtin_types_compatible_p(__typeof__(&fn), type)}
+/* CHK_ft_x (probe.h): 1 = same type, 0 = different, -1 = not declared */
+#define P(fn, type) {#fn, #type, CHK_##fn(type)}
 
 static const t_proto	g_protos[] = {
 	P(ft_isalpha, int (*)(int)),
@@ -62,21 +64,40 @@ static const t_proto	g_protos[] = {
 	P(ft_lstmap, t_list *(*)(t_list *, void *(*)(void *), void (*)(void *))),
 };
 
-static void	test_prototypes(void)
+static void	check_protos(size_t from, size_t to)
 {
 	size_t	i;
 
-	i = 0;
-	while (i < sizeof(g_protos) / sizeof(*g_protos))
+	i = from;
+	while (i < to && i < sizeof(g_protos) / sizeof(*g_protos))
 	{
 		CASE("%s", g_protos[i].name);
-		EXPECT(g_protos[i].ok, "prototype differs from the subject, expected type %s", g_protos[i].expected);
+		if (g_protos[i].ok < 0)
+			t_fail("not declared in libft.h, expected type %s", g_protos[i].expected);
+		else
+			EXPECT(g_protos[i].ok, "prototype differs from the subject, expected type %s", g_protos[i].expected);
 		i++;
 	}
 }
 
+static void	protos_part1(void)
+{
+	check_protos(0, 23);
+}
+
+static void	protos_part2(void)
+{
+	check_protos(23, 34);
+}
+
+static void	protos_list(void)
+{
+	check_protos(34, 43);
+}
+
 static void	test_t_list(void)
 {
+#if HAS_T_LIST
 	t_list	l;
 
 	CASE("typedef struct s_list { void *content; struct s_list *next; } t_list;");
@@ -84,11 +105,25 @@ static void	test_t_list(void)
 		&& sizeof(t_list) == 2 * sizeof(void *), "t_list is not exactly the struct of the subject");
 	EXPECT(__builtin_types_compatible_p(__typeof__(l.content), void *), "content must be void *");
 	EXPECT(__builtin_types_compatible_p(__typeof__(l.next), struct s_list *), "next must be struct s_list *");
+#else
+	t_fail("t_list is not defined in libft.h (the tester uses the subject's struct meanwhile)");
+#endif
 }
+
+static const t_test	g_protos_tests[] = {
+	TEST("prototypes of part 1 (23 functions)", "Each prototype of libft.h must be the libc one, without \
+restrict: const char * vs char *, int c vs char c, size_t vs int... A different type is a KO in \
+evaluation (and can break the callers).", protos_part1),
+	TEST("prototypes of part 2 (11 functions)", "Exactly the prototypes of the subject (char const *, \
+unsigned int start, the function pointers of strmapi / striteri...).", protos_part2),
+	TEST("prototypes of the list functions (9)", "Exactly the prototypes of the subject v19.3: note that \
+ft_lstsize returns unsigned int in this version.", protos_list),
+	TEST("t_list struct", "typedef struct s_list { void *content; struct s_list *next; } t_list; exactly, \
+in libft.h.", test_t_list),
+};
 
 void	run_prototypes(void)
 {
 	t_section("PROTOTYPES (subject v19.3)");
-	t_run("prototypes of all 43 functions (ft_lstsize returns unsigned int!)", test_prototypes, T_MUST, 5);
-	t_run("t_list struct", test_t_list, T_MUST, 5);
+	GROUP_OTHER("libft.h", g_protos_tests);
 }

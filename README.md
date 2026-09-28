@@ -29,8 +29,9 @@ Linux (glibc) is required: 42 machines, WSL or a Docker Ubuntu all work.
 | `make`              | subject checks + builds your libft + runs every test               |
 | `make test`         | only the tests                                                      |
 | `make check`        | only the subject checks (Makefile, relink, forbidden functions...) |
-| `make run T=split`  | only the tests whose name contains `split`                          |
-| `./tester lstmap`   | same thing, directly                                                |
+| `make run T=split`  | only `ft_split` (or the tests whose name contains `split`)          |
+| `make run V=1`      | one line per test instead of one line per function                  |
+| `./tester -v lstmap`| same thing, directly                                                |
 | `make fclean`       | cleans the tester **and** your libft                               |
 
 ## What is detected
@@ -50,6 +51,32 @@ reading one byte before or after a string is a segfault, with the call printed.
 | `[OK]`            | fine                                                            |
 | `[KO]`            | wrong result, crash, timeout, leak, overflow...                 |
 | `[WARN]`          | undefined behaviour (NULL args, 1M-node lists...) that evaluators like to try. It does not count as an error. |
+| `[MISSING]`       | the function is not in your `libft.a` (not written yet, or not in the `SRCS` of your Makefile) |
+
+## Clean screen, details in `traces.log`
+
+The screen shows one line per function, with one mark per test (5 to 14 tests each):
+
+```
+  ft_strlcat       ✔ ✘ ✘ ✔ ✘ ✔ ✔ !                4/8  [KO]
+  ft_split         ✔ ✔ ✔ ✔ ✔ ✔ ✔ ✔ ✔ ✔ ✔ ✔ ✔ ✔  14/14 [OK]
+  ft_lstnew        · · · · · ·                    0/6  [MISSING]
+```
+
+`✔` passed, `✘` failed, `!` undefined behaviour not handled (WARN), `?` calls a
+missing function. `make run V=1` shows one line per test with its name.
+**Why** something failed goes to `libft_tester/traces.log`: the call that failed,
+expected vs got, crashes, leaks, compiler errors of your libft, and anything your
+functions printed on stdout/stderr (it never reaches the screen).
+
+## Nothing stops the tester
+
+You can run it at any point of the project:
+
+- a function you haven't written yet (or that isn't in your Makefile) is `[MISSING]`, the others are still tested;
+- a prototype that is missing or wrong in `libft.h` is a `[KO]` of the prototype test, never a compile error;
+- if your libft doesn't compile, every `.c` that does compile is still tested;
+- a crash, an infinite loop or a leak only fails that test.
 
 ### Memory killers
 

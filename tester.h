@@ -9,7 +9,7 @@
 #include <unistd.h>
 #include <ctype.h>
 #include <stddef.h>
-#include "libft.h"
+#include "libft_api.h"
 
 /* ------------------------------------------------------------------ */
 /* Look & feel                                                        */
@@ -21,11 +21,8 @@
 #define C_CYN "\e[0;36m"
 #define C_DIM "\e[2m"
 #define C_RST "\e[0m"
-
-#define ATENTION() printf("\n\n\e[1;33m⚠️  ATTENTION: every test runs in its own process. A segfault, an infinite loop, a double free or a leak in your libft will be reported and the tester keeps going.\033[0m\n")
-#define TITLE(func) printf(C_CYN "\n\n ========= %s =========== \n\n" C_RST, func)
-#define END(x, w) ((x) == 0 ? printf("\n\n\n🎉\e[1;32m --- CONGRATULATIONS!! YOU PASSED ALL THE TESTS! MAY THE FORCE BE WITH YOU --- \e[0m🎉\n" C_YEL "     (%d warning(s): undefined-behaviour checks evaluators like to try, see above)\n\n\n" C_RST, w) \
-						 : printf("\n\n\n😢\e[1;31m --- SADLY YOU DID NOT PASS THE TESTS. YOU HAVE [%d] ERRORS. BETTER LUCK NEXT TIME --- \e[0m😢\n" C_YEL "     (+ %d warning(s))\n\n\n" C_RST, x, w))
+#define C_MAG "\e[1;35m"
+#define TITLE(func) printf(C_CYN "\n ========= %s =========== \n\n" C_RST, func)
 
 #define HEADER() printf("\e[0;32m⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣤⣤⠤⠐⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n\
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡌⡦⠊⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n\
@@ -69,20 +66,46 @@
 
 typedef void	(*t_testfn)(void);
 
-/* Run fn in a forked child. Crashes, timeouts, double frees, heap
-** overflows, write-after-free and leaks are all detected automatically. */
-void		t_run(const char *name, t_testfn fn, int level, int timeout);
+/*
+** One test = one forked child. Crashes, timeouts, double frees, heap
+** overflows, write-after-free and leaks are all detected automatically.
+** why: what the test checks, shown in the trace when it fails.
+** mfail: run it once to count its armed mallocs, then once per malloc with
+**        exactly that one returning NULL.
+*/
+typedef struct s_test
+{
+	const char	*name;
+	const char	*why;
+	t_testfn	fn;
+	int			level;
+	int			timeout;
+	int			mfail;
+}	t_test;
 
-/* Run fn once to count its armed mallocs, then once more for every
-** allocation point with exactly that malloc returning NULL. */
-void		t_run_malloc_fail(const char *name, t_testfn fn, int timeout);
+#define TEST(name, why, fn)			{name, why, fn, T_MUST, 5, 0}
+#define TEST_SLOW(name, why, fn)	{name, why, fn, T_MUST, 30, 0}
+#define TEST_UB(name, why, fn)		{name, why, fn, T_WARN, 5, 0}
+#define TEST_UB_SLOW(name, why, fn)	{name, why, fn, T_WARN, 30, 0}
+#define TEST_MF(name, why, fn)		{name, why, fn, T_MUST, 10, 1}
+
+/* All the tests of one libft function (skipped as [MISSING] when the
+** function is not in libft.a), or of something else (GROUP_OTHER). */
+void		t_group(const char *fn, int is_libft, const t_test *tests, size_t n);
+#define GROUP(fn, tab) t_group(fn, 1, tab, sizeof(tab) / sizeof(*tab))
+#define GROUP_OTHER(title, tab) t_group(title, 0, tab, sizeof(tab) / sizeof(*tab))
 
 void		t_section(const char *title);
-int			t_filter_match(const char *name);
 void		t_set_filter(const char *filter);
+void		t_set_verbose(int verbose);
 int			t_total_fails(void);
-int			t_total_warns(void);
+int			t_total_missing(void);
 void		t_print_summary(void);
+
+/* Trace file: every detail goes there, the screen stays clean.
+** $LIBFT_TESTER_TRACE (set by the Makefile, appended to) or traces.log. */
+void		t_trace_open(void);
+void		t_trace(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 /* Inside a test (child process) */
 void		t_case(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -120,6 +143,24 @@ size_t		t_capture_read(int fd, char *buf, size_t size);
 
 /* Common check: s must be a live malloc'd block holding exp. */
 void		t_check_str(const char *what, char *got, const char *exp);
+
+
+/* One armed call returning a string, inside a TEST_MF: NULL if one of its
+** mallocs failed (and nothing leaked, checked at the end), exp otherwise. */
+#define MF_STR(CALL, EXP) do { \
+	int		inj_ = t_injected(); \
+	char	*r_; \
+	t_arm(); \
+	r_ = (CALL); \
+	t_disarm(); \
+	if (t_injected() && !inj_) \
+	{ \
+		EXPECT(r_ == NULL, "returned non-NULL although one of its mallocs returned NULL"); \
+		t_free(r_); \
+	} \
+	else \
+		t_check_str("", r_, EXP); \
+} while (0)
 
 /* ------------------------------------------------------------------ */
 /* Test suites                                                        */

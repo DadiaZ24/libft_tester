@@ -1,0 +1,4 @@
+.build/
+tester
+traces.log
+*.o

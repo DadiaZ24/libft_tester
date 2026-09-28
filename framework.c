@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
+#include <sys/resource.h>
 
 /*
 ** ======================================================================
@@ -374,15 +375,16 @@ static void	emit(char type, const char *msg)
 	(void)!write(g_out, buf, n);
 }
 
-/* async-signal-safe version, used from the signal handler */
-static void	emit_crash(const char *what)
+/* async-signal-safe version, used from the signal handler.
+** 'C' = crash, 'M' = called a function missing from libft.a */
+static void	emit_signal(char type, const char *what)
 {
 	char	buf[800];
 	size_t	n;
 	size_t	i;
 
 	n = 0;
-	buf[n++] = 'C';
+	buf[n++] = type;
 	buf[n++] = '|';
 	i = 0;
 	while (what[i] && n < 300)
@@ -398,6 +400,11 @@ static void	emit_crash(const char *what)
 	}
 	buf[n++] = '\n';
 	(void)!write(g_out, buf, n);
+}
+
+static void	emit_crash(const char *what)
+{
+	emit_signal('C', what);
 }
 
 void	t_case(const char *fmt, ...)
@@ -621,20 +628,28 @@ size_t	t_capture_read(int fd, char *buf, size_t size)
 ** ======================================================================
 **  PARENT SIDE: running tests
 ** ======================================================================
+** Every test runs in a forked child. What it reports (and anything your
+** functions printed) goes to the trace file, never to the screen.
 */
 
-static int			g_total_fails;
-static int			g_total_warns;
-static const char	*g_filter;
-static char			g_failed_names[256][96];
-static int			g_nfailed_names;
+static FILE			*g_trace;
+static const char	*g_trace_path = "traces.log";
+static int			g_cap = -1;
+
+/* what a child writes to stdout/stderr (your printf, glibc messages...) */
+#define CAP_MAX		2048
+/* so a function printing in an infinite loop can't fill the disk */
+#define CAP_FSIZE	((rlim_t)16 << 20)
 
 typedef struct s_res
 {
 	char	out[16384];
 	size_t	len;
+	char	cap[CAP_MAX];
+	size_t	caplen;
 	int		status;
 	int		crashed;
+	int		missing;
 	int		failed;
 	long	calls;
 	int		injected;
@@ -665,6 +680,16 @@ static void	on_signal(int sig)
 	_exit(100 + sig);
 }
 
+/* stub of a function missing from libft.a (libft_api.c) */
+void	t_missing_call(const char *fn)
+{
+	char	msg[128];
+
+	snprintf(msg, sizeof(msg), "called %s, which is not in your libft.a", fn);
+	emit_signal('M', msg);
+	_exit(97);
+}
+
 static void	child_setup_signals(void)
 {
 	static char			altstack[1 << 16];
@@ -685,6 +710,21 @@ static void	child_setup_signals(void)
 	while (i < sizeof(sigs) / sizeof(*sigs))
 		sigaction(sigs[i++], &sa, NULL);
 	signal(SIGPIPE, SIG_IGN);
+	signal(SIGXFSZ, SIG_IGN);
+}
+
+/* stdout/stderr of the child go to g_cap, never to the screen */
+static void	child_redirect_output(void)
+{
+	struct rlimit	rl;
+
+	if (g_cap < 0)
+		return ;
+	dup2(g_cap, STDOUT_FILENO);
+	dup2(g_cap, STDERR_FILENO);
+	rl.rlim_cur = CAP_FSIZE;
+	rl.rlim_max = CAP_FSIZE;
+	setrlimit(RLIMIT_FSIZE, &rl);
 }
 
 static void	child_main(int out, t_testfn fn, int timeout, long fail_at)
@@ -697,6 +737,7 @@ static void	child_main(int out, t_testfn fn, int timeout, long fail_at)
 	g_injected = 0;
 	g_nfails = 0;
 	g_step[0] = 0;
+	child_redirect_output();
 	child_setup_signals();
 	track_init();
 	alarm((unsigned)timeout);
@@ -706,6 +747,7 @@ static void	child_main(int out, t_testfn fn, int timeout, long fail_at)
 	g_step[0] = 0;
 	final_heap_check();
 	g_track = 0;
+	fflush(stdout);
 	snprintf(msg, sizeof(msg), "%ld", g_calls);
 	emit('N', msg);
 	snprintf(msg, sizeof(msg), "%d", g_injected);
@@ -723,6 +765,8 @@ static void	spawn(t_testfn fn, int timeout, long fail_at, t_res *r)
 	char	*nl;
 
 	memset(r, 0, sizeof(*r));
+	if (g_cap < 0)
+		g_cap = t_capture_open();
 	if (pipe(fds) < 0)
 	{
 		perror("pipe");
@@ -730,6 +774,8 @@ static void	spawn(t_testfn fn, int timeout, long fail_at, t_res *r)
 	}
 	fflush(stdout);
 	fflush(stderr);
+	if (g_trace)
+		fflush(g_trace);
 	pid = fork();
 	if (pid < 0)
 	{
@@ -758,6 +804,9 @@ static void	spawn(t_testfn fn, int timeout, long fail_at, t_res *r)
 	close(fds[0]);
 	while (waitpid(pid, &r->status, 0) < 0 && errno == EINTR)
 		;
+	if (g_cap >= 0)
+		r->caplen = t_capture_read(g_cap, r->cap, sizeof(r->cap) - 1);
+	r->cap[r->caplen] = 0;
 	r->out[r->len] = 0;
 	line = r->out;
 	while (*line)
@@ -771,6 +820,8 @@ static void	spawn(t_testfn fn, int timeout, long fail_at, t_res *r)
 			r->injected = atoi(line + 2);
 		else if (line[0] == 'C')
 			r->crashed = 1;
+		else if (line[0] == 'M')
+			r->missing = 1;
 		if (!nl)
 			break ;
 		*nl = '\n';
@@ -778,12 +829,64 @@ static void	spawn(t_testfn fn, int timeout, long fail_at, t_res *r)
 	}
 	if (WIFSIGNALED(r->status) || (WIFEXITED(r->status) && WEXITSTATUS(r->status) >= 98))
 		r->crashed = 1;
-	if (r->crashed || !WIFEXITED(r->status) || WEXITSTATUS(r->status) != 0)
+	if (r->crashed || r->missing || !WIFEXITED(r->status) || WEXITSTATUS(r->status) != 0)
 		r->failed = 1;
 }
 
-/* print every F/C/H/L line of a result */
-static void	print_details(t_res *r, const char *prefix)
+/*
+** ----------------------------------------------------------------------
+**  Trace file
+** ----------------------------------------------------------------------
+*/
+
+void	t_trace_open(void)
+{
+	const char	*env;
+
+	env = getenv("LIBFT_TESTER_TRACE");
+	if (env && *env)
+		g_trace_path = env;
+	g_trace = fopen(g_trace_path, env && *env ? "a" : "w");
+	t_trace("\n==================== TESTS ====================\n");
+}
+
+void	t_trace(const char *fmt, ...)
+{
+	va_list	ap;
+
+	if (!g_trace)
+		return ;
+	va_start(ap, fmt);
+	vfprintf(g_trace, fmt, ap);
+	va_end(ap);
+}
+
+/* what the functions printed, indented */
+static void	trace_output(t_res *r)
+{
+	char	*line;
+	char	*nl;
+
+	if (!r->caplen)
+		return ;
+	t_trace("              output of your functions (stdout/stderr)%s:\n",
+		r->caplen >= CAP_MAX - 1 ? ", first 2 KB" : "");
+	line = r->cap;
+	while (*line)
+	{
+		nl = strchr(line, '\n');
+		if (nl)
+			*nl = 0;
+		t_trace("              | %s\n", line);
+		if (!nl)
+			break ;
+		*nl = '\n';
+		line = nl + 1;
+	}
+}
+
+/* every F/C/H/L/M line of a result */
+static void	trace_details(t_res *r, const char *prefix)
 {
 	char	*line;
 	char	*nl;
@@ -796,9 +899,9 @@ static void	print_details(t_res *r, const char *prefix)
 		nl = strchr(line, '\n');
 		if (nl)
 			*nl = 0;
-		if (line[1] == '|' && (line[0] == 'F' || line[0] == 'C' || line[0] == 'H' || line[0] == 'L'))
+		if (line[0] && line[1] == '|' && strchr("FCHLM", line[0]))
 		{
-			printf("      %s%s%s%s\n", line[0] == 'C' ? C_RED : "", prefix, line + 2, C_RST);
+			t_trace("              %s%s\n", prefix, line + 2);
 			printed++;
 		}
 		if (!nl)
@@ -807,110 +910,306 @@ static void	print_details(t_res *r, const char *prefix)
 		line = nl + 1;
 	}
 	if (WIFSIGNALED(r->status) && !printed)
-		printf("      " C_RED "%s%s" C_RST "\n", prefix, sig_name(WTERMSIG(r->status)));
+		t_trace("              %s%s\n", prefix, sig_name(WTERMSIG(r->status)));
+	trace_output(r);
 }
 
-static void	print_name(const char *name)
-{
-	int	len;
+/*
+** ----------------------------------------------------------------------
+**  Results, grouped by libft function
+** ----------------------------------------------------------------------
+** Screen: one line per function, one mark per test
+**           ✔ passed   ✘ failed   ! undefined behaviour not handled (WARN)
+**           ? calls a function that is missing from libft.a
+**         or, with -v, one line per test.
+** Trace:  every test; for one that fails, what it checks and why it failed.
+*/
 
-	len = printf("  %s ", name);
-	while (len++ < 72)
-		putchar('.');
-}
-
-static void	record(const char *name, int level)
+enum e_verdict
 {
-	if (level == T_WARN)
+	V_OK,
+	V_KO,
+	V_WARN,
+	V_MISSING
+};
+
+typedef struct s_stats
+{
+	int		tests[4];
+	int		f_ok;
+	int		f_ko;
+	int		f_missing;
+}	t_stats;
+
+#define NAME_COLS	16
+#define MARK_COLS	14
+
+static t_stats		g_st;
+static const char	*g_filter;
+static int			g_verbose;
+static char			g_failed[80][160];
+static int			g_nfailed;
+
+static const char	*g_tags[] = {"[OK]", "[KO]", "[WARN]", "[MISSING]"};
+static const char	*g_colors[] = {C_GRN, C_RED, C_YEL, C_MAG};
+static const char	*g_marks[] = {"✔", "✘", "!", "?"};
+
+static void	section_start(void);
+
+/* "label text..." wrapped at ~100 columns, aligned after the label */
+static void	trace_wrap(const char *label, const char *text)
+{
+	size_t	col;
+	size_t	w;
+	size_t	indent;
+
+	indent = 14 + strlen(label) + 1;
+	t_trace("              %s ", label);
+	col = indent;
+	while (*text)
 	{
-		g_total_warns++;
-		return ;
+		w = strcspn(text, " ");
+		if (col + w > 100 && col > indent)
+		{
+			t_trace("\n%*s", (int)indent, "");
+			col = indent;
+		}
+		t_trace("%.*s", (int)w, text);
+		col += w;
+		text += w;
+		while (*text == ' ')
+			text++;
+		if (*text && col + 1 <= 100)
+		{
+			t_trace(" ");
+			col++;
+		}
 	}
-	g_total_fails++;
-	if (g_nfailed_names < 256)
-		snprintf(g_failed_names[g_nfailed_names++], 96, "%s", name);
+	t_trace("\n");
 }
 
-void	t_run(const char *name, t_testfn fn, int level, int timeout)
+static int	trace_result(const t_test *t, int num, int v, t_res *r,
+	const char *prefix, const char *note)
 {
-	t_res	r;
-
-	if (!t_filter_match(name))
-		return ;
-	print_name(name);
-	spawn(fn, timeout, -1, &r);
-	if (!r.failed)
-		printf(" " C_GRN "[OK]" C_RST "\n");
-	else
-	{
-		printf(" %s\n", level == T_WARN ? C_YEL "[WARN]" C_RST : C_RED "[KO]" C_RST);
-		print_details(&r, "✗ ");
-		record(name, level);
-	}
+	t_trace("  %-9s %2d. %s\n", g_tags[v], num, t->name);
+	if (v != V_OK)
+		trace_wrap("what:", t->why);
+	if (note)
+		t_trace("              %s\n", note);
+	if (r && v == V_OK)
+		trace_output(r);
+	else if (r)
+		trace_details(r, prefix);
+	if (v != V_OK)
+		t_trace("\n");
+	return (v);
 }
 
-void	t_run_malloc_fail(const char *name, t_testfn fn, int timeout)
+/* malloc failure injection: once normally to count the mallocs, then once
+** per malloc with exactly that one returning NULL */
+static int	run_malloc_fail(const t_test *t, int num, t_res *r)
 {
-	t_res	r;
 	t_res	first;
 	long	n;
 	long	i;
 	long	bad;
 	long	first_bad;
-	char	prefix[80];
+	char	prefix[96];
+	char	note[128];
 
-	if (!t_filter_match(name))
-		return ;
-	print_name(name);
-	spawn(fn, timeout, -1, &r);
-	if (r.failed)
-	{
-		printf(" " C_RED "[KO]" C_RST "\n");
-		print_details(&r, "✗ (normal run, no malloc failing) ");
-		record(name, T_MUST);
-		return ;
-	}
-	n = r.calls;
+	n = r->calls;
 	if (n == 0)
-	{
-		printf(" " C_RED "[KO]" C_RST "\n      ✗ no call to malloc was seen\n");
-		record(name, T_MUST);
-		return ;
-	}
+		return (trace_result(t, num, V_KO, NULL, "", "✗ no call to malloc was seen"));
 	bad = 0;
 	first_bad = -1;
 	i = 0;
 	while (i < n)
 	{
-		spawn(fn, timeout, i, &r);
-		if (r.failed)
+		spawn(t->fn, t->timeout, i, r);
+		if (r->failed && first_bad < 0)
 		{
-			if (first_bad < 0)
-			{
-				first_bad = i;
-				first = r;
-			}
-			bad++;
+			first_bad = i;
+			first = *r;
 		}
+		bad += r->failed;
 		i++;
 	}
 	if (!bad)
 	{
-		printf(" " C_GRN "[OK]" C_RST C_DIM " %ld/%ld malloc failure points survived" C_RST "\n", n, n);
-		return ;
+		snprintf(note, sizeof(note), "%ld/%ld malloc failure points survived", n, n);
+		return (trace_result(t, num, V_OK, NULL, "", note));
 	}
-	printf(" " C_RED "[KO]" C_RST " %ld/%ld malloc failure points broken\n", bad, n);
+	snprintf(note, sizeof(note), "%ld/%ld malloc failure points broken, the first one:", bad, n);
 	snprintf(prefix, sizeof(prefix), "✗ [malloc #%ld of %ld returns NULL] ", first_bad + 1, n);
-	print_details(&first, prefix);
-	record(name, T_MUST);
+	return (trace_result(t, num, V_KO, &first, prefix, note));
 }
+
+static int	run_test(const t_test *t, int num)
+{
+	t_res	r;
+
+	spawn(t->fn, t->timeout, -1, &r);
+	if (r.missing)
+		return (trace_result(t, num, V_MISSING, &r, "✗ ", NULL));
+	if (r.failed)
+		return (trace_result(t, num, t->level == T_WARN ? V_WARN : V_KO, &r,
+				t->mfail ? "✗ (normal run, no malloc failing) " : "✗ ", NULL));
+	if (t->mfail)
+		return (run_malloc_fail(t, num, &r));
+	return (trace_result(t, num, V_OK, &r, "", NULL));
+}
+
+static int	test_selected(const char *group, const t_test *t)
+{
+	return (!g_filter || strstr(group, g_filter) || strstr(t->name, g_filter));
+}
+
+static void	pad_marks(int used)
+{
+	while (used++ < MARK_COLS)
+		printf("  ");
+}
+
+/* the function is not in libft.a: its tests are not even run */
+static void	group_missing(const char *fn, const t_test *tests, size_t n)
+{
+	size_t	i;
+	int		declared;
+
+	t_func_exists(fn, &declared);
+	t_trace("  [MISSING] %s is not in your libft.a%s\n", fn,
+		declared ? "" : " (not declared in libft.h either)");
+	t_trace("            (not written yet, or not in the SRCS of your Makefile)\n");
+	t_trace("            these %zu tests were not run:\n", n);
+	i = 0;
+	while (i < n)
+	{
+		t_trace("              %2zu. %s\n", i + 1, tests[i].name);
+		i++;
+	}
+	if (g_verbose)
+		printf("\n  %s\n     " C_MAG "[MISSING]" C_RST " %zu tests not run\n", fn, n);
+	else
+	{
+		printf("  %-*s ", NAME_COLS, fn);
+		i = 0;
+		while (i++ < n)
+			printf(C_DIM "· " C_RST);
+		pad_marks((int)n);
+		printf(" %2d/%-2zu " C_MAG "[MISSING]" C_RST "\n", 0, n);
+	}
+	g_st.tests[V_MISSING] += (int)n;
+	g_st.f_missing++;
+	if (g_nfailed < 80)
+		snprintf(g_failed[g_nfailed++], 160, "%s  (missing)", fn);
+}
+
+static void	group_end(const char *fn, int is_libft, int *v, size_t n)
+{
+	char	line[160];
+	size_t	i;
+	int		ran;
+	int		ok;
+	int		bad;
+	size_t	len;
+
+	ran = 0;
+	ok = 0;
+	bad = 0;
+	len = (size_t)snprintf(line, 160, "%s  (tests", fn);
+	i = 0;
+	while (i < n)
+	{
+		if (v[i] >= 0)
+			ran++;
+		if (v[i] == V_OK)
+			ok++;
+		if (v[i] == V_KO || v[i] == V_MISSING)
+		{
+			bad++;
+			if (len < 150)
+				len += (size_t)snprintf(line + len, 160 - len, " %zu", i + 1);
+		}
+		i++;
+	}
+	if (bad && g_nfailed < 80)
+		snprintf(g_failed[g_nfailed++], 160, "%s)", line);
+	if (is_libft && bad)
+		g_st.f_ko++;
+	else if (is_libft)
+		g_st.f_ok++;
+	if (g_verbose)
+		printf("     -> %d/%d passed  %s%s" C_RST "\n", ok, ran, bad ? C_RED : C_GRN, bad ? "[KO]" : "[OK]");
+	else
+	{
+		pad_marks(ran);
+		printf(" %2d/%-2d %s%s" C_RST "\n", ok, ran, bad ? C_RED : C_GRN, bad ? "[KO]" : "[OK]");
+	}
+	t_trace("  -> %s: %d/%d tests passed\n", fn, ok, ran);
+}
+
+void	t_group(const char *fn, int is_libft, const t_test *tests, size_t n)
+{
+	int		v[64];
+	size_t	i;
+	size_t	sel;
+	int		len;
+
+	sel = 0;
+	i = 0;
+	while (i < n)
+		sel += test_selected(fn, &tests[i++]);
+	if (!sel || n > 64)
+		return ;
+	section_start();
+	t_trace("\n==================== %s ====================\n\n", fn);
+	if (is_libft && !t_func_exists(fn, NULL))
+		return (group_missing(fn, tests, n));
+	if (g_verbose)
+		printf("\n  %s\n", fn);
+	else
+		printf("  %-*s ", NAME_COLS, fn);
+	i = 0;
+	while (i < n)
+	{
+		v[i] = -1;
+		if (test_selected(fn, &tests[i]))
+		{
+			if (g_verbose)
+			{
+				len = printf("     %2zu. %s ", i + 1, tests[i].name);
+				while (len++ < 80)
+					putchar('.');
+			}
+			v[i] = run_test(&tests[i], (int)i + 1);
+			g_st.tests[v[i]]++;
+			if (g_verbose)
+				printf(" %s%s" C_RST "\n", g_colors[v[i]], g_tags[v[i]]);
+			else
+				printf("%s%s" C_RST " ", g_colors[v[i]], g_marks[v[i]]);
+			fflush(stdout);
+		}
+		i++;
+	}
+	group_end(fn, is_libft, v, n);
+}
+
+/* the title is printed with the first group of the section that runs, so
+** a filtered run shows no empty sections */
+static const char	*g_section;
 
 void	t_section(const char *title)
 {
-	if (g_filter)
-		printf(C_CYN "\n --- %s ---\n" C_RST, title);
-	else
-		TITLE(title);
+	g_section = title;
+}
+
+static void	section_start(void)
+{
+	if (!g_section)
+		return ;
+	TITLE(g_section);
+	t_trace("\n\n######## %s ########\n", g_section);
+	g_section = NULL;
 }
 
 void	t_set_filter(const char *filter)
@@ -918,32 +1217,45 @@ void	t_set_filter(const char *filter)
 	g_filter = filter;
 }
 
-int	t_filter_match(const char *name)
+void	t_set_verbose(int verbose)
 {
-	return (!g_filter || strstr(name, g_filter) != NULL);
+	g_verbose = verbose;
 }
 
 int	t_total_fails(void)
 {
-	return (g_total_fails);
+	return (g_st.tests[V_KO]);
 }
 
-int	t_total_warns(void)
+int	t_total_missing(void)
 {
-	return (g_total_warns);
+	return (g_st.tests[V_MISSING]);
 }
 
 void	t_print_summary(void)
 {
 	int	i;
 
-	if (!g_nfailed_names)
-		return ;
-	printf(C_RED "\n\n ========= FAILED TESTS =========== \n\n" C_RST);
-	i = 0;
-	while (i < g_nfailed_names)
-		printf("   ✗ %s\n", g_failed_names[i++]);
-	if (g_total_fails > g_nfailed_names)
-		printf("   ... and %d more\n", g_total_fails - g_nfailed_names);
-	printf(C_DIM "\n   Re-run a single test with:  ./tester <part of its name>\n" C_RST);
+	if (g_nfailed)
+	{
+		t_trace("\n==================== NOT PASSED ====================\n\n");
+		i = 0;
+		while (i < g_nfailed)
+			t_trace("  ✗ %s\n", g_failed[i++]);
+	}
+	printf(C_CYN "\n ========= RESULT =========== \n\n" C_RST);
+	printf("  functions  " C_GRN "%3d OK" C_RST "   " C_RED "%3d KO" C_RST "   " C_MAG "%3d MISSING" C_RST "\n",
+		g_st.f_ok, g_st.f_ko, g_st.f_missing);
+	printf("  tests      " C_GRN "%3d OK" C_RST "   " C_RED "%3d KO" C_RST "   " C_MAG "%3d MISSING" C_RST
+		"   " C_YEL "%d WARN" C_RST C_DIM " (undefined behaviour, not an error)" C_RST "\n",
+		g_st.tests[V_OK], g_st.tests[V_KO], g_st.tests[V_MISSING], g_st.tests[V_WARN]);
+	if (!g_st.tests[V_KO] && !g_st.tests[V_MISSING])
+		printf("\n  🎉 " C_GRN "ALL THE TESTS PASSED! MAY THE FORCE BE WITH YOU" C_RST "\n");
+	printf(C_DIM "\n  ✔ passed  ✘ failed  ! undefined behaviour  ? calls a missing function"
+		"\n  What each test checks and why it failed: %s"
+		"\n  One line per test: make run V=1    Only some tests: make run T=<name>" C_RST "\n\n",
+		g_trace_path);
+	if (g_trace)
+		fclose(g_trace);
+	g_trace = NULL;
 }
